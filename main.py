@@ -1,6 +1,7 @@
 import time
 from datetime import datetime
 from periphery import I2C
+import vl53l0x  # Biblioteca oficial VL53L0X
 
 # Intervalo de leitura (segundos)
 INTERVAL_SEC = 1
@@ -14,11 +15,8 @@ AHT10_BUS = "/dev/i2c-2"
 AHT10_ADDRESS = 0x38
 i2c_aht10 = I2C(AHT10_BUS)
 
-# ---------------- VL53L0X CONFIG (I2C-3) ----------------
-VL53L0X_BUS = "/dev/i2c-3"
-VL53L0X_ADDRESS = 0x29
-i2c_vl53 = I2C(VL53L0X_BUS)
-
+# ---------------- VL53L0X CONFIG ----------------
+VL53L0X_BUS = 3  # Barramento I2C (como parâmetro para a biblioteca vl53l0x)
 
 # ---------------- AHT10 ----------------
 def aht10_init():
@@ -41,30 +39,6 @@ def aht10_data(data):
     temperature = (((data[3] & 0x0F) << 16) | (data[4] << 8) | data[5]) * 200 / (1 << 20) - 50
     return humidity, temperature
 
-
-# ---------------- VL53L0X ----------------
-def vl53l0x_init():
-    # Reset básico
-    i2c_vl53.transfer(VL53L0X_ADDRESS, [I2C.Message([0x88, 0x00])])
-    i2c_vl53.transfer(VL53L0X_ADDRESS, [I2C.Message([0x80, 0x01])])
-    i2c_vl53.transfer(VL53L0X_ADDRESS, [I2C.Message([0xFF, 0x01])])
-    i2c_vl53.transfer(VL53L0X_ADDRESS, [I2C.Message([0x00, 0x00])])
-    time.sleep(0.5)
-
-    # Start continuous mode
-    i2c_vl53.transfer(VL53L0X_ADDRESS, [I2C.Message([0x00, 0x02])])
-    time.sleep(0.01)
-
-def vl53l0x_read_distance():
-    # Leitura do RESULT_RANGE_STATUS (0x14)
-    i2c_vl53.transfer(VL53L0X_ADDRESS, [I2C.Message([0x14])])
-    read_cmd = I2C.Message([0x00] * 12, read=True)
-    i2c_vl53.transfer(VL53L0X_ADDRESS, [read_cmd])
-
-    dist = (read_cmd.data[10] << 8) | read_cmd.data[11]
-    return dist
-
-
 # ---------------- MAIN ----------------
 def main():
     print("Iniciando monitoramento AHT10 + VL53L0X!\n")
@@ -77,7 +51,8 @@ def main():
 
     # Inicializa sensores
     aht10_init()
-    vl53l0x_init()
+    tof = vl53l0x.VL53L0X(bus=VL53L0X_BUS)  # Inicializa VL53L0X
+    tof.start_ranging()
 
     print("data_hora,umidade_percentual,temperatura_celsius,distancia_mm")
 
@@ -90,7 +65,7 @@ def main():
             hum, temp = aht10_data(aht10_read())
 
             # VL53L0X
-            dist = vl53l0x_read_distance()
+            dist = tof.get_distance()
 
             # Print no terminal
             print(f"{timestamp},{hum:.2f},{temp:.2f},{dist}")
@@ -102,10 +77,9 @@ def main():
             time.sleep(INTERVAL_SEC)
 
     except KeyboardInterrupt:
+        tof.stop_ranging()
         i2c_aht10.close()
-        i2c_vl53.close()
         print("\nFinalizando monitoramento!\n")
-
 
 if __name__ == "__main__":
     main()
