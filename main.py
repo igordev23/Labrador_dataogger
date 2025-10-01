@@ -85,6 +85,9 @@ def main():
                 aht10_measure()
                 hum, temp = aht10_data(aht10_read())
 
+                # Pequeno delay para garantir que VL53 está pronto
+                time.sleep(0.05)
+
                 # ---------------- VL53L0X ----------------
                 dist = vl53l0x_read_distance()
 
