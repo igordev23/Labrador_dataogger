@@ -2,39 +2,35 @@ import time
 from datetime import datetime
 from periphery import I2C
 
-# Intervalo de leitura (segundos)
+# ---------------- CONFIG ----------------
 INTERVAL_SEC = 1
-
-# Caminho do arquivo
 SD_CARD = "/media/caninos/adata64"
 DATALOGGER = "/data.txt"
 
-# ---------------- AHT10 CONFIG (I2C-2) ----------------
+# ---------------- AHT10 (I2C-2) ----------------
 AHT10_BUS = "/dev/i2c-2"
 AHT10_ADDRESS = 0x38
 i2c_aht10 = I2C(AHT10_BUS)
 
-# ---------------- VL53L0X CONFIG (I2C-3) ----------------
+# ---------------- VL53L0X (I2C-3) ----------------
 VL53L0X_BUS = "/dev/i2c-3"
 VL53L0X_ADDRESS = 0x29
 i2c_vl53 = I2C(VL53L0X_BUS)
 
 
-# ---------------- AHT10 ----------------
+# ---------------- FUNÇÕES AHT10 ----------------
 def aht10_init():
-    init_command = [0xBE, 0x08, 0x00]
-    i2c_aht10.transfer(AHT10_ADDRESS, [I2C.Message(init_command, read=False)])
+    i2c_aht10.transfer(AHT10_ADDRESS, [I2C.Message([0xBE, 0x08, 0x00], read=False)])
     time.sleep(0.5)
 
 def aht10_measure():
-    measure_command = [0xAC, 0x33, 0x00]
-    i2c_aht10.transfer(AHT10_ADDRESS, [I2C.Message(measure_command, read=False)])
+    i2c_aht10.transfer(AHT10_ADDRESS, [I2C.Message([0xAC, 0x33, 0x00], read=False)])
     time.sleep(0.5)
 
 def aht10_read():
-    read_command = I2C.Message([0x00] * 6, read=True)
-    i2c_aht10.transfer(AHT10_ADDRESS, [read_command])
-    return read_command.data
+    msg = I2C.Message([0x00]*6, read=True)
+    i2c_aht10.transfer(AHT10_ADDRESS, [msg])
+    return msg.data
 
 def aht10_data(data):
     humidity = ((data[1] << 12) | (data[2] << 4) | (data[3] >> 4)) * 100 / (1 << 20)
@@ -42,31 +38,24 @@ def aht10_data(data):
     return humidity, temperature
 
 
-# ---------------- VL53L0X ----------------
+# ---------------- FUNÇÕES VL53L0X ----------------
 def vl53l0x_init():
-    # Reset básico simplificado
+    # Sequência básica de reset
     i2c_vl53.transfer(VL53L0X_ADDRESS, [I2C.Message([0x88, 0x00], read=False)])
     i2c_vl53.transfer(VL53L0X_ADDRESS, [I2C.Message([0x80, 0x01], read=False)])
     i2c_vl53.transfer(VL53L0X_ADDRESS, [I2C.Message([0xFF, 0x01], read=False)])
     i2c_vl53.transfer(VL53L0X_ADDRESS, [I2C.Message([0x00, 0x00], read=False)])
     time.sleep(0.5)
-
     # Start continuous mode
     i2c_vl53.transfer(VL53L0X_ADDRESS, [I2C.Message([0x00, 0x02], read=False)])
     time.sleep(0.01)
 
 def vl53l0x_read_distance():
-    # Checa se a medição terminou (status)
-    read_status = I2C.Message([0x13], read=False)
-    i2c_vl53.transfer(VL53L0X_ADDRESS, [read_status])
-    status = I2C.Message([0x00], read=True)
-    i2c_vl53.transfer(VL53L0X_ADDRESS, [status])
-
-    # Leitura do RESULT_RANGE_STATUS (0x14)
+    # Lê RESULT_RANGE_STATUS (0x14)
     i2c_vl53.transfer(VL53L0X_ADDRESS, [I2C.Message([0x14], read=False)])
-    read_cmd = I2C.Message([0x00] * 12, read=True)
-    i2c_vl53.transfer(VL53L0X_ADDRESS, [read_cmd])
-    dist = (read_cmd.data[10] << 8) | read_cmd.data[11]
+    msg = I2C.Message([0x00]*12, read=True)
+    i2c_vl53.transfer(VL53L0X_ADDRESS, [msg])
+    dist = (msg.data[10] << 8) | msg.data[11]
     return dist
 
 
@@ -81,22 +70,22 @@ def main():
     except FileExistsError:
         print("Arquivo já existe. Novos dados serão acrescidos.\n")
 
-    # Inicializa sensores
+    # Inicializa sensores separadamente
     aht10_init()
     vl53l0x_init()
 
     print("data_hora,umidade_percentual,temperatura_celsius,distancia_mm")
 
     try:
-        with open(SD_CARD + DATALOGGER, "a") as f:  # mantém arquivo aberto
+        with open(SD_CARD + DATALOGGER, "a") as f:
             while True:
                 timestamp = datetime.now()
 
-                # AHT10
+                # ---------------- AHT10 ----------------
                 aht10_measure()
                 hum, temp = aht10_data(aht10_read())
 
-                # VL53L0X
+                # ---------------- VL53L0X ----------------
                 dist = vl53l0x_read_distance()
 
                 # Print no terminal
