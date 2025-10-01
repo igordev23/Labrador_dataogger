@@ -1,7 +1,6 @@
 import time
 from datetime import datetime
 from periphery import I2C
-import vl53l0x  # Biblioteca oficial VL53L0X
 
 # Intervalo de leitura (segundos)
 INTERVAL_SEC = 1
@@ -15,18 +14,21 @@ AHT10_BUS = "/dev/i2c-2"
 AHT10_ADDRESS = 0x38
 i2c_aht10 = I2C(AHT10_BUS)
 
-# ---------------- VL53L0X CONFIG ----------------
-VL53L0X_BUS = 3  # Barramento I2C (como parâmetro para a biblioteca vl53l0x)
+# ---------------- VL53L0X CONFIG (I2C-3) ----------------
+VL53L0X_BUS = "/dev/i2c-3"
+VL53L0X_ADDRESS = 0x29
+i2c_vl53 = I2C(VL53L0X_BUS)
+
 
 # ---------------- AHT10 ----------------
 def aht10_init():
     init_command = [0xBE, 0x08, 0x00]
-    i2c_aht10.transfer(AHT10_ADDRESS, [I2C.Message(init_command)])
+    i2c_aht10.transfer(AHT10_ADDRESS, [I2C.Message(init_command, read=False)])
     time.sleep(0.5)
 
 def aht10_measure():
     measure_command = [0xAC, 0x33, 0x00]
-    i2c_aht10.transfer(AHT10_ADDRESS, [I2C.Message(measure_command)])
+    i2c_aht10.transfer(AHT10_ADDRESS, [I2C.Message(measure_command, read=False)])
     time.sleep(0.5)
 
 def aht10_read():
@@ -39,10 +41,40 @@ def aht10_data(data):
     temperature = (((data[3] & 0x0F) << 16) | (data[4] << 8) | data[5]) * 200 / (1 << 20) - 50
     return humidity, temperature
 
+
+# ---------------- VL53L0X ----------------
+def vl53l0x_init():
+    # Reset básico simplificado
+    i2c_vl53.transfer(VL53L0X_ADDRESS, [I2C.Message([0x88, 0x00], read=False)])
+    i2c_vl53.transfer(VL53L0X_ADDRESS, [I2C.Message([0x80, 0x01], read=False)])
+    i2c_vl53.transfer(VL53L0X_ADDRESS, [I2C.Message([0xFF, 0x01], read=False)])
+    i2c_vl53.transfer(VL53L0X_ADDRESS, [I2C.Message([0x00, 0x00], read=False)])
+    time.sleep(0.5)
+
+    # Start continuous mode
+    i2c_vl53.transfer(VL53L0X_ADDRESS, [I2C.Message([0x00, 0x02], read=False)])
+    time.sleep(0.01)
+
+def vl53l0x_read_distance():
+    # Checa se a medição terminou (status)
+    read_status = I2C.Message([0x13], read=False)
+    i2c_vl53.transfer(VL53L0X_ADDRESS, [read_status])
+    status = I2C.Message([0x00], read=True)
+    i2c_vl53.transfer(VL53L0X_ADDRESS, [status])
+
+    # Leitura do RESULT_RANGE_STATUS (0x14)
+    i2c_vl53.transfer(VL53L0X_ADDRESS, [I2C.Message([0x14], read=False)])
+    read_cmd = I2C.Message([0x00] * 12, read=True)
+    i2c_vl53.transfer(VL53L0X_ADDRESS, [read_cmd])
+    dist = (read_cmd.data[10] << 8) | read_cmd.data[11]
+    return dist
+
+
 # ---------------- MAIN ----------------
 def main():
     print("Iniciando monitoramento AHT10 + VL53L0X!\n")
 
+    # Cria arquivo se não existir
     try:
         with open(SD_CARD + DATALOGGER, "x") as f:
             f.write("data_hora,umidade_percentual,temperatura_celsius,distancia_mm\n")
@@ -51,35 +83,36 @@ def main():
 
     # Inicializa sensores
     aht10_init()
-    tof = vl53l0x.VL53L0X(bus=VL53L0X_BUS)  # Inicializa VL53L0X
-    tof.start_ranging()
+    vl53l0x_init()
 
     print("data_hora,umidade_percentual,temperatura_celsius,distancia_mm")
 
     try:
-        while True:
-            timestamp = datetime.now()
+        with open(SD_CARD + DATALOGGER, "a") as f:  # mantém arquivo aberto
+            while True:
+                timestamp = datetime.now()
 
-            # AHT10
-            aht10_measure()
-            hum, temp = aht10_data(aht10_read())
+                # AHT10
+                aht10_measure()
+                hum, temp = aht10_data(aht10_read())
 
-            # VL53L0X
-            dist = tof.get_distance()
+                # VL53L0X
+                dist = vl53l0x_read_distance()
 
-            # Print no terminal
-            print(f"{timestamp},{hum:.2f},{temp:.2f},{dist}")
+                # Print no terminal
+                print(f"{timestamp},{hum:.2f},{temp:.2f},{dist}")
 
-            # Grava no arquivo
-            with open(SD_CARD + DATALOGGER, "a") as f:
+                # Grava no arquivo
                 f.write(f"{timestamp},{hum:.2f},{temp:.2f},{dist}\n")
+                f.flush()  # garante escrita imediata no SD
 
-            time.sleep(INTERVAL_SEC)
+                time.sleep(INTERVAL_SEC)
 
     except KeyboardInterrupt:
-        tof.stop_ranging()
         i2c_aht10.close()
+        i2c_vl53.close()
         print("\nFinalizando monitoramento!\n")
+
 
 if __name__ == "__main__":
     main()
